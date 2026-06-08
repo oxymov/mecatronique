@@ -1,0 +1,156 @@
+#include <Arduino.h>
+#include <Servo.h> // Bibliothèque magique pour gérer le servo en arrière-plan
+
+// ==========================================
+//          CONFIGURATION MOTEURS ROUES
+// ==========================================
+const int E1 = 5; 
+const int M1 = 4; 
+const int E2 = 6; 
+const int M2 = 7; 
+
+// ==========================================
+//          CONFIGURATION SERVOMOTEUR
+// ==========================================
+Servo monServo;
+const int pinServo = 2;
+const int origine = 830;
+const int cible = 1830;
+
+bool servoEnMarche = false;
+unsigned long chronometreServo = 0;
+int etapeServo = 0; // 0=repos, 1=cible, 2=origine
+
+// ==========================================
+//          CONFIGURATION MODES
+// ==========================================
+char modeCourant = 'M'; // 'M' = Manuel, 'B' = Balle
+
+// --- Déclaration des fonctions ---
+void avancerToutDroit(int vitesse);
+void reculer(int vitesse);
+void tournerGauche(int vitesse);
+void tournerDroite(int vitesse);
+void stopper();
+
+void setup() {
+  // Setup moteurs
+  pinMode(M1, OUTPUT);
+  pinMode(E1, OUTPUT);
+  pinMode(M2, OUTPUT);
+  pinMode(E2, OUTPUT);
+
+  // Setup Servo
+  monServo.attach(pinServo);
+  monServo.writeMicroseconds(origine); // On le met en position de départ
+
+  Serial.begin(115200); 
+}
+
+void loop() {
+  // ---------------------------------------------------------
+  // 1. LECTURE DU BOUTON PHYSIQUE (Broche A7)
+  // ---------------------------------------------------------
+  int bouton = analogRead(7);
+  if (bouton < 50) {
+    servoEnMarche = true;
+  }
+  else if (bouton > 100 && bouton < 250) {
+    // Arrêt d'urgence du servo
+    servoEnMarche = false;
+    etapeServo = 0;
+    monServo.writeMicroseconds(origine); 
+  }
+
+  // ---------------------------------------------------------
+  // 2. LECTURE DU BLUETOOTH
+  // ---------------------------------------------------------
+  if (Serial.available() > 0) {
+    char commande = Serial.read();
+
+    // Gestion des modes et du servo
+    if (commande == 'M' || commande == 'm') { modeCourant = 'M'; stopper(); } 
+    else if (commande == 'B' || commande == 'b') { modeCourant = 'B'; }
+    else if (commande == 'C' || commande == 'c') { 
+      // La lettre 'C' (comme Catapulte ou Crochet) active/désactive le servo !
+      servoEnMarche = !servoEnMarche; 
+      if (!servoEnMarche) {
+        etapeServo = 0;
+        monServo.writeMicroseconds(origine);
+      }
+    }
+
+    // Gestion de la direction (Uniquement si on est en mode Manuel)
+    if (modeCourant == 'M') {
+      switch (commande) {
+        case 'Z': case 'z': avancerToutDroit(200); break;
+        case 'S': case 's': reculer(200); break;
+        case 'Q': case 'q': tournerGauche(150); break;
+        case 'D': case 'd': tournerDroite(150); break;
+        case 'X': case 'x': case ' ': stopper(); break;
+      }
+    }
+  }
+
+  // ---------------------------------------------------------
+  // 3. MODE AUTOMATIQUE (Balle)
+  // ---------------------------------------------------------
+  if (modeCourant == 'B') {
+    stopper();
+    delay(1000); 
+    avancerToutDroit(255); 
+    delay(800); 
+    stopper(); 
+    modeCourant = 'M'; // Retour en manuel
+  }
+
+  // ---------------------------------------------------------
+  // 4. ANIMATION DU SERVOMOTEUR (Non Bloquant)
+  // ---------------------------------------------------------
+  if (servoEnMarche) {
+    // Étape 0 : On lance le mouvement vers la cible
+    if (etapeServo == 0) {
+      monServo.writeMicroseconds(cible);
+      chronometreServo = millis(); // On note l'heure qu'il est
+      etapeServo = 1;
+    }
+    // Étape 1 : On attend 2 secondes à la position cible
+    // Tes 100 boucles de 19ms + code prenaient environ 2000ms (2 secondes)
+    else if (etapeServo == 1) {
+      if (millis() - chronometreServo >= 2000) {
+        monServo.writeMicroseconds(origine); // On retourne à l'origine
+        chronometreServo = millis();
+        etapeServo = 2;
+      }
+    }
+    // Étape 2 : On attend 2 secondes à l'origine avant de recommencer
+    else if (etapeServo == 2) {
+      if (millis() - chronometreServo >= 2000) {
+        etapeServo = 0; // On remet à 0 pour boucler à l'infini
+      }
+    }
+  }
+}
+
+// ==========================================
+//          FONCTIONS DE MOUVEMENT
+// ==========================================
+void avancerToutDroit(int vitesse) {
+  digitalWrite(M1, LOW); digitalWrite(M2, LOW);
+  analogWrite(E1, vitesse); analogWrite(E2, vitesse);
+}
+void reculer(int vitesse) {
+  digitalWrite(M1, HIGH); digitalWrite(M2, HIGH);
+  analogWrite(E1, vitesse); analogWrite(E2, vitesse);
+}
+void tournerGauche(int vitesse) {
+  digitalWrite(M1, HIGH); digitalWrite(M2, LOW);  
+  analogWrite(E1, vitesse); analogWrite(E2, vitesse);
+}
+void tournerDroite(int vitesse) {
+  digitalWrite(M1, LOW);  digitalWrite(M2, HIGH); 
+  analogWrite(E1, vitesse); analogWrite(E2, vitesse);
+}
+void stopper() {
+  analogWrite(E1, 0); analogWrite(E2, 0);
+}
