@@ -1,0 +1,56 @@
+#include <Arduino.h>
+
+bool enMarche = false;
+
+int origine = 830;
+int cible = 1830;
+
+void setup() {
+  pinMode(2, OUTPUT);
+  
+  for(int i = 0; i < 50; i++) {
+    digitalWrite(2, HIGH);
+    delayMicroseconds(origine); 
+    digitalWrite(2, LOW);
+    delay(19);
+  }
+}
+
+void loop() {
+  int bouton = analogRead(7);
+  if (bouton < 50) {
+    enMarche = true;
+  }
+  
+  if (bouton > 100 && bouton < 250) {
+    enMarche = false;
+  }
+
+  if (enMarche) {
+    for (int c = 0; c < 100; c++) {
+      bouton = analogRead(7); 
+      if (bouton > 100 && bouton < 250) { enMarche = false; break; } // Arrêt d'urgence S2
+      
+      digitalWrite(2, HIGH);
+      delayMicroseconds(cible);
+      digitalWrite(2, LOW);
+      delay(18);
+    }
+
+    for (int c = 0; c < 100; c++) {
+      bouton = analogRead(7); 
+      if (bouton > 100 && bouton < 250) { enMarche = false; break; } // Arrêt d'urgence S2
+
+      digitalWrite(2, HIGH);
+      delayMicroseconds(origine);
+      digitalWrite(2, LOW);
+      delay(19);
+    }
+    
+  } else {
+    digitalWrite(2, HIGH);
+    delayMicroseconds(origine);
+    digitalWrite(2, LOW);
+    delay(19);
+  }
+}
