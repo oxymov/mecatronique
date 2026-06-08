@@ -1,32 +1,31 @@
 #include <Arduino.h>
-#include <Servo.h> // Bibliothèque magique pour gérer le servo en arrière-plan
+#include <Servo.h> // Indispensable pour pas avoir à coder le signal PWM du servo à la main
 
-// ==========================================
-//          CONFIGURATION MOTEURS ROUES
-// ==========================================
+// --- Déclaration des broches ---
+// Les gars, touchez pas à ces pins, c'est câblé en dur sur la carte Romeo pour les moteurs
 const int E1 = 5; 
 const int M1 = 4; 
 const int E2 = 6; 
 const int M2 = 7; 
 
-// ==========================================
-//          CONFIGURATION SERVOMOTEUR
-// ==========================================
+// --- Config du Servo (le bras / la catapulte) ---
 Servo monServo;
-const int pinServo = 2;
-const int origine = 830;
+const int pinServo = 2; // Branché sur le pin digital 2
+
+// Hé, si le bras force trop contre le châssis ou ne se lève pas assez, 
+// c'est ici qu'il faut bidouiller les valeurs (entre 500 et 2500 en général)
+const int origine = 830; 
 const int cible = 1830;
 
+// Variables pour pas utiliser delay() (sinon le robot crash dans les murs)
 bool servoEnMarche = false;
-unsigned long chronometreServo = 0;
-int etapeServo = 0; // 0=repos, 1=cible, 2=origine
+unsigned long chronometreServo = 0; // Va stocker l'heure en ms
+int etapeServo = 0; // Pour savoir où on en est dans l'animation (0=repos, 1=cible, 2=origine)
 
-// ==========================================
-//          CONFIGURATION MODES
-// ==========================================
-char modeCourant = 'M'; // 'M' = Manuel, 'B' = Balle
+// --- États du robot ---
+char modeCourant = 'M'; // 'M' par défaut, on changera avec le tél
 
-// --- Déclaration des fonctions ---
+// Obligatoire sur PlatformIO : faut annoncer les fonctions avant de les utiliser
 void avancerToutDroit(int vitesse);
 void reculer(int vitesse);
 void tournerGauche(int vitesse);
@@ -34,107 +33,101 @@ void tournerDroite(int vitesse);
 void stopper();
 
 void setup() {
-  // Setup moteurs
   pinMode(M1, OUTPUT);
   pinMode(E1, OUTPUT);
   pinMode(M2, OUTPUT);
   pinMode(E2, OUTPUT);
 
-  // Setup Servo
   monServo.attach(pinServo);
-  monServo.writeMicroseconds(origine); // On le met en position de départ
+  monServo.writeMicroseconds(origine); // On force la position de départ au démarrage
 
+  // Giga important : 115200 pour la Romeo BLE. Si on met 9600 elle lira que des hiéroglyphes
   Serial.begin(115200); 
 }
 
 void loop() {
-  // ---------------------------------------------------------
-  // 1. LECTURE DU BOUTON PHYSIQUE (Broche A7)
-  // ---------------------------------------------------------
+  // 1. Check du gros bouton physique d'urgence (sur A7)
   int bouton = analogRead(7);
   if (bouton < 50) {
-    servoEnMarche = true;
+    servoEnMarche = true; // On lance le bras
   }
   else if (bouton > 100 && bouton < 250) {
-    // Arrêt d'urgence du servo
+    // Bouton relâché/sécurité : on coupe tout direct
     servoEnMarche = false;
     etapeServo = 0;
     monServo.writeMicroseconds(origine); 
   }
 
-  // ---------------------------------------------------------
-  // 2. LECTURE DU BLUETOOTH
-  // ---------------------------------------------------------
+  // 2. Écoute du Bluetooth (le tél ou l'appli web)
   if (Serial.available() > 0) {
     char commande = Serial.read();
 
-    // Gestion des modes et du servo
+    // Changement de mode ou activation du bras via la touche 'C'
     if (commande == 'M' || commande == 'm') { modeCourant = 'M'; stopper(); } 
     else if (commande == 'B' || commande == 'b') { modeCourant = 'B'; }
     else if (commande == 'C' || commande == 'c') { 
-      // La lettre 'C' (comme Catapulte ou Crochet) active/désactive le servo !
+      // Petit hack sympa : on inverse le booléen avec "!" pour faire un mode on/off
       servoEnMarche = !servoEnMarche; 
       if (!servoEnMarche) {
         etapeServo = 0;
-        monServo.writeMicroseconds(origine);
+        monServo.writeMicroseconds(origine); // On range le bras si on le désactive
       }
     }
 
-    // Gestion de la direction (Uniquement si on est en mode Manuel)
+    // Commandes de conduite (marche que si on est en manuel)
+    // Si jamais le robot tourne à l'envers, faut juste intervertir les lettres ici
     if (modeCourant == 'M') {
       switch (commande) {
         case 'Z': case 'z': avancerToutDroit(200); break;
         case 'S': case 's': reculer(200); break;
-        case 'Q': case 'q': tournerGauche(150); break;
+        case 'Q': case 'q': tournerGauche(150); break; // 150 c'est pour tourner plus chill
         case 'D': case 'd': tournerDroite(150); break;
         case 'X': case 'x': case ' ': stopper(); break;
       }
     }
   }
 
-  // ---------------------------------------------------------
-  // 3. MODE AUTOMATIQUE (Balle)
-  // ---------------------------------------------------------
+  // 3. Séquence de rattrapage de balle (Mode auto)
+  // Là on s'en fout d'utiliser delay() car le robot a pas besoin d'écouter le Bluetooth pendant qu'il fonce
   if (modeCourant == 'B') {
     stopper();
-    delay(1000); 
-    avancerToutDroit(255); 
-    delay(800); 
+    delay(1000); // Temps que la balle retombe (à ajuster en conditions réelles)
+    
+    avancerToutDroit(255); // Gaz à fond !
+    delay(800); // <- Modifiez ça selon la distance du tir !
+    
     stopper(); 
-    modeCourant = 'M'; // Retour en manuel
+    modeCourant = 'M'; // Fini, on rend la main au pilote
   }
 
-  // ---------------------------------------------------------
-  // 4. ANIMATION DU SERVOMOTEUR (Non Bloquant)
-  // ---------------------------------------------------------
+  // 4. Mouvement du bras (Le fameux code non-bloquant avec millis)
   if (servoEnMarche) {
-    // Étape 0 : On lance le mouvement vers la cible
     if (etapeServo == 0) {
       monServo.writeMicroseconds(cible);
-      chronometreServo = millis(); // On note l'heure qu'il est
+      chronometreServo = millis(); // On déclenche le chrono
       etapeServo = 1;
     }
-    // Étape 1 : On attend 2 secondes à la position cible
-    // Tes 100 boucles de 19ms + code prenaient environ 2000ms (2 secondes)
     else if (etapeServo == 1) {
+      // Au lieu de delay(2000), on check si 2 sec se sont écoulées
       if (millis() - chronometreServo >= 2000) {
-        monServo.writeMicroseconds(origine); // On retourne à l'origine
-        chronometreServo = millis();
+        monServo.writeMicroseconds(origine);
+        chronometreServo = millis(); // On reset le chrono pour le retour
         etapeServo = 2;
       }
     }
-    // Étape 2 : On attend 2 secondes à l'origine avant de recommencer
     else if (etapeServo == 2) {
+      // Pareil ici, attente de 2 sec avant de relancer le cycle
       if (millis() - chronometreServo >= 2000) {
-        etapeServo = 0; // On remet à 0 pour boucler à l'infini
+        etapeServo = 0;
       }
     }
   }
 }
 
-// ==========================================
-//          FONCTIONS DE MOUVEMENT
-// ==========================================
+// --- Les fonctions pour les moteurs ---
+// Note : Si un moteur tourne à l'envers par rapport à l'autre, 
+// faut inverser les HIGH et LOW du digitalWrite correspondant (M1 ou M2)
+
 void avancerToutDroit(int vitesse) {
   digitalWrite(M1, LOW); digitalWrite(M2, LOW);
   analogWrite(E1, vitesse); analogWrite(E2, vitesse);
